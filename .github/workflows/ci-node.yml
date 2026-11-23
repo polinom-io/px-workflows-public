@@ -1,0 +1,111 @@
+# Reusable CI for Node.js / TypeScript repos using pnpm.
+#
+# Needs in the caller repo: `.nvmrc`, a `packageManager: pnpm@x.y.z` field and
+# `pnpm-lock.yaml`. Each script input names a package.json script; set it to ""
+# to skip that step.
+#
+# Caller example (pin this workflow by full commit SHA):
+#
+#   jobs:
+#     ci:
+#       permissions:
+#         contents: read
+#       uses: polinom-io/px-workflows-public/.github/workflows/ci-node.yml@<sha> # vX.Y.Z
+#       with:
+#         lint-script: check
+#         build-script: ""
+#
+# Run `pnpm audit` on pull requests that change package.json, pnpm-lock.yaml or
+# pnpm-workspace.yaml, on every push to main and on a weekly schedule: set those
+# triggers in the caller and pass `audit: false` where the run should skip it.
+name: ci-node
+
+on:
+  workflow_call:
+    inputs:
+      typecheck-script:
+        description: package.json script for type checking ("" to skip)
+        type: string
+        default: typecheck
+      lint-script:
+        description: package.json script for lint/format checks ("" to skip)
+        type: string
+        default: lint
+      test-script:
+        description: package.json script for tests ("" to skip)
+        type: string
+        default: test
+      build-script:
+        description: package.json script for the build ("" to skip)
+        type: string
+        default: build
+      audit:
+        description: Run `pnpm audit --audit-level high` (dev dependencies included)
+        type: boolean
+        default: true
+      working-directory:
+        description: Directory holding package.json, relative to the repo root
+        type: string
+        default: .
+      timeout-minutes:
+        description: Job timeout
+        type: number
+        default: 15
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+        with:
+          package_json_file: ${{ inputs.working-directory }}/package.json
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: ${{ inputs.working-directory }}/.nvmrc
+          cache: pnpm
+          cache-dependency-path: ${{ inputs.working-directory }}/pnpm-lock.yaml
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        if: inputs.typecheck-script != ''
+        run: pnpm run "$SCRIPT"
+        env:
+          SCRIPT: ${{ inputs.typecheck-script }}
+
+      - name: Lint
+        if: inputs.lint-script != ''
+        run: pnpm run "$SCRIPT"
+        env:
+          SCRIPT: ${{ inputs.lint-script }}
+
+      - name: Test
+        if: inputs.test-script != ''
+        run: pnpm run "$SCRIPT"
+        env:
+          SCRIPT: ${{ inputs.test-script }}
+
+      - name: Build
+        if: inputs.build-script != ''
+        run: pnpm run "$SCRIPT"
+        env:
+          SCRIPT: ${{ inputs.build-script }}
+
+      # GitHub creates no Dependabot alerts for pnpm 12 lockfiles, so CI audits instead.
+      - name: Audit dependencies
+        if: inputs.audit
+        run: pnpm audit --audit-level high
