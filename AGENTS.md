@@ -10,7 +10,8 @@ Polinom.io rules are synced into `.ai/` from px-context; edit them there. If you
 
 ## Architecture
 - `.github/workflows/ci-node.yml`: pnpm install, typecheck, lint, test, build, `pnpm audit`.
-- `.github/workflows/release-please.yml`: release PR with a GitHub App token; optional publish to GitHub Packages.
+- `.github/workflows/release-please.yml`: release PR and tag with a GitHub App token; read-only GITHUB_TOKEN.
+- `.github/workflows/publish-node.yml`: publish a release tag to GitHub Packages (`packages: write`, only in repos that publish).
 - `.github/workflows/release.yml`: releases this repo with its own `release-please.yml`; tags are `vX.Y.Z`.
 - `.github/dependabot.yml`: weekly updates of the pinned actions.
 
