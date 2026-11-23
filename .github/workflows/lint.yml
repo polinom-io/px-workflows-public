@@ -1,0 +1,44 @@
+# Lints this repo's workflows with actionlint on every PR that touches them, so a
+# workflow file error fails the PR instead of a run on main (startup_failure).
+# actionlint is the official release binary, verified against a pinned sha256.
+# Dependabot doesn't update it: bump VERSION and SHA256 together from the release's
+# asset digest (gh api repos/rhysd/actionlint/releases/tags/vX.Y.Z).
+name: lint
+
+on:
+  pull_request:
+    paths:
+      - ".github/**"
+  push:
+    branches: [main]
+    paths:
+      - ".github/**"
+
+permissions:
+  contents: read
+
+jobs:
+  actionlint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    env:
+      VERSION: 1.7.12
+      SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install actionlint
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          asset="actionlint_${VERSION}_linux_amd64.tar.gz"
+          gh release download "v${VERSION}" -R rhysd/actionlint -p "$asset" -D "$RUNNER_TEMP"
+          echo "${SHA256}  ${RUNNER_TEMP}/${asset}" | sha256sum -c -
+          tar -xzf "${RUNNER_TEMP}/${asset}" -C "$RUNNER_TEMP" actionlint
+
+      - name: Lint workflows
+        run: '"$RUNNER_TEMP/actionlint" -color'
