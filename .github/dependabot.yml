@@ -1,0 +1,15 @@
+# Weekly updates for the actions pinned in .github/workflows. Minor and patch
+# updates are grouped; majors get their own PR. Titles follow Conventional Commits.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /            # scans .github/workflows
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci
+      include: scope        # ci(deps): bump …
+    groups:
+      actions-minor-patch:
+        patterns: ["*"]
+        update-types: [minor, patch]
