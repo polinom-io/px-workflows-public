@@ -1,0 +1,21 @@
+# Releases this repo with its own reusable release-please workflow. Merging the
+# release PR tags vX.Y.Z; callers pin that tag's commit SHA with a "# vX.Y.Z"
+# comment so Dependabot can propose newer releases.
+name: release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  release-please:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/release-please.yml
+    with:
+      app-client-id: ${{ vars.PX_RELEASE_PLEASE_APP_CLIENT_ID }}
+    secrets:
+      app-private-key: ${{ secrets.PX_RELEASE_PLEASE_APP_PRIVATE_KEY }}

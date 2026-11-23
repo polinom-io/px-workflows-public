@@ -1,6 +1,6 @@
 # px-workflows-public
 
-Polinom.io reusable GitHub Actions workflows. Call them pinned by full commit SHA:
+Polinom.io reusable GitHub Actions workflows. Releases are tagged `vX.Y.Z` (see [CHANGELOG.md](CHANGELOG.md)). Call them pinned by the full commit SHA of a release tag, with the version as a comment so Dependabot can update it:
 
 ```yaml
 jobs:
