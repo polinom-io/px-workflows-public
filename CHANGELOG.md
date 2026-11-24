@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.4.0](https://github.com/polinom-io/px-workflows-public/compare/v0.3.0...v0.4.0) (2026-11-24)
+
+
+### Features
+
+* add reusable pr template check workflow ([#12](https://github.com/polinom-io/px-workflows-public/issues/12)) ([4734cb4](https://github.com/polinom-io/px-workflows-public/commit/4734cb4989d706e463193a802b9a78bcf0720ced))
+
+
+### Bug Fixes
+
+* **pr-standard:** align the check with the org pr structure ([#14](https://github.com/polinom-io/px-workflows-public/issues/14)) ([60ef121](https://github.com/polinom-io/px-workflows-public/commit/60ef121ad0f4795d572616956eebbe64236cfd58))
+
 ## [0.3.0](https://github.com/polinom-io/px-workflows-public/compare/v0.2.0...v0.3.0) (2026-11-24)
 
 
