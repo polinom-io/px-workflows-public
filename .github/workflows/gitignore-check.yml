@@ -6,8 +6,10 @@
 #   - any `<snippets-dir>/*.gitignore` has a line starting with `!` (the
 #     directory is optional: repos created from a template delete it);
 #   - `.gitignore` has no `<secrets-header>` line, or that header is not the last
-#     line starting with `# --- `. `!` lines inside the secrets block (such as
-#     `!.env.example`) are allowed.
+#     line starting with `# --- `;
+#   - a line after `<secrets-header>` starts with `!` and does not end in
+#     `.example`. Only `!*.example` re-includes (such as `!.env.example`) are
+#     allowed there; anything else would re-include an ignored secret.
 # Each violation is printed as file:line. Only file contents are read; no PR text
 # reaches the script.
 #
@@ -97,6 +99,9 @@ jobs:
               while IFS= read -r later; do
                 problems+=(".gitignore:${later}: block header after the secrets block (line ${secrets_line}); the secrets block must be last")
               done < <(awk -v from="$secrets_line" 'NR > from && /^# --- / { print NR }' .gitignore)
+              while IFS= read -r neg; do
+                problems+=(".gitignore:${neg}: negation after the secrets header re-includes ignored files; only *.example allowed")
+              done < <(awk -v from="$secrets_line" '{ sub(/\r$/, "") } NR > from && /^!/ && !/\.example$/ { print NR }' .gitignore)
             fi
           fi
 
