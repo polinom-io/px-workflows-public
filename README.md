@@ -17,7 +17,7 @@ jobs:
 | [`release-please.yml`](.github/workflows/release-please.yml) | Release PRs and tags with a GitHub App token |
 | [`publish-node.yml`](.github/workflows/publish-node.yml) | Publish a release tag to GitHub Packages after the CI gates |
 | [`security.yml`](.github/workflows/security.yml) | gitleaks over the full git history (`secrets` job) and OSV-Scanner on lockfiles, failing at CVSS >= 7 (`dependencies` job) |
-| [`pr-standard.yml`](.github/workflows/pr-standard.yml) | PR title in Conventional Commits and body following the org PR template (`pr-body` job) |
+| [`pr-standard.yml`](.github/workflows/pr-standard.yml) | PR title (Conventional Commit, ≤ 72 chars, all PRs) and body sections Summary, Test plan and Checklist (human and agent PRs) |
 
 Inputs, required permissions and caller examples are in each file's header.
 
@@ -47,9 +47,9 @@ jobs:
 
 Repos without a lockfile pass the `dependencies` job with a skip message. Outputs `osv-result` (`none`, `skipped`, `found`), `osv-findings` and `osv-high` report what the scan saw. `osv-enforce: false` reports without failing; this repo's tests use it against `test/fixtures/` so the gate is proven to fire.
 
-## PR template check
+## PR standard check
 
-Call `pr-standard.yml` on `pull_request` with `edited` included, so fixing the body re-runs it. Make `pr-standard / pr-body` a required check only after the caller is on main:
+Call `pr-standard.yml` on `pull_request` with `edited` included, so fixing the title or body re-runs it. Make `pr-standard / check` a required check only after the caller is on main:
 
 ```yaml
 on:
@@ -64,5 +64,4 @@ jobs:
     uses: polinom-io/px-workflows-public/.github/workflows/pr-standard.yml@<sha> # vX.Y.Z
 ```
 
-It requires a Conventional Commits title (`check-title: false` to skip that part) and the template's `## Summary` and `## How it was tested` sections with text, plus the five `## Checklist` items, ticked or not. Bots and release-please, px-context and Dependabot branches are skipped. The `test-*` inputs exist only for this repo's tests.
-
+The title is checked on every PR, bots included: a Conventional Commit with a lowercase description, no final period, at most 72 characters. Human and agent PRs also need the org template's `## Summary`, `## Test plan` and `## Checklist` (five items, ticked or not) with text. For bot authors (user type Bot) only the body is skipped; the branch name never skips anything. The `test-*` inputs exist only for this repo's tests.
