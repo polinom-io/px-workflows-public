@@ -1,0 +1,140 @@
+# Checks this repo's own PRs with pr-standard.yml (job `pr-standard / pr-body`)
+# and tests it against fixture titles and bodies in test-mode, which reports
+# without failing; the assert job checks each outcome so the run stays green.
+name: pr-standard-check
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  pr-standard:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/pr-standard.yml
+
+  t-valid:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/pr-standard.yml
+    with:
+      test-mode: true
+      test-title: "feat(api)!: add invoice export"
+      test-head-ref: feat/invoice-export
+      test-body: |
+        <!-- Title hint from the template -->
+        ## Summary
+
+        Adds invoice export.
+
+        ## How it was tested
+
+        Ran the unit tests.
+
+        ## Checklist
+
+        - [x] Commits are signed.
+        - [ ] No secrets, keys or tokens (point to where they live instead).
+        - [x] No real personal data in code, fixtures, logs or screenshots: synthetic data only.
+        - [ ] New or changed workflows: a shared reusable workflow was considered first.
+        - [x] Docs updated if behaviour or setup changed.
+
+  t-unfilled-template:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/pr-standard.yml
+    with:
+      test-mode: true
+      test-title: "fix: handle empty input"
+      test-head-ref: fix/empty-input
+      test-body: |
+        ## Summary
+
+        <!-- What changes and why. -->
+
+        ## How it was tested
+
+        <!-- Commands run. -->
+
+        ## Checklist
+
+        - [ ] Commits are signed.
+        - [ ] No secrets, keys or tokens.
+        - [ ] No real personal data.
+        - [ ] A shared reusable workflow was considered first.
+        - [ ] Docs updated.
+
+  t-free-form:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/pr-standard.yml
+    with:
+      test-mode: true
+      test-title: "Add invoice export"
+      test-head-ref: feat/invoice-export
+      test-body: |
+        ## Summary
+        Adds invoice export.
+
+        ## Test plan
+        - [x] tests pass
+
+  t-bot:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/pr-standard.yml
+    with:
+      test-mode: true
+      test-title: "chore(deps): bump something"
+      test-author-type: Bot
+      test-head-ref: some/branch
+
+  t-release-branch:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/pr-standard.yml
+    with:
+      test-mode: true
+      test-title: "chore(main): release 1.2.3"
+      test-head-ref: release-please--branches--main
+
+  assert:
+    needs: [t-valid, t-unfilled-template, t-free-form, t-bot, t-release-branch]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Assert outcomes
+        env:
+          JOBS: >-
+            ${{ needs.t-valid.result }} ${{ needs.t-unfilled-template.result }}
+            ${{ needs.t-free-form.result }} ${{ needs.t-bot.result }}
+            ${{ needs.t-release-branch.result }}
+          VALID: ${{ needs.t-valid.outputs.result }}
+          VALID_PROBLEMS: ${{ needs.t-valid.outputs.problems }}
+          UNFILLED: ${{ needs.t-unfilled-template.outputs.result }}
+          UNFILLED_PROBLEMS: ${{ needs.t-unfilled-template.outputs.problems }}
+          FREE: ${{ needs.t-free-form.outputs.result }}
+          FREE_PROBLEMS: ${{ needs.t-free-form.outputs.problems }}
+          BOT: ${{ needs.t-bot.outputs.result }}
+          RELEASE: ${{ needs.t-release-branch.outputs.result }}
+        run: |
+          fail=0
+          check() { if [ "$2" = "$3" ]; then echo "ok   $1"; else echo "::error::$1: expected '$3', got '$2'"; fail=1; fi; }
+          has() { case "$2" in *"$3"*) echo "ok   $1";; *) echo "::error::$1: '$3' not in '$2'"; fail=1;; esac; }
+          check "all test jobs succeed" "$JOBS" "success success success success success"
+          check "valid body passes (problems: $VALID_PROBLEMS)" "$VALID" "pass"
+          check "unfilled template fails" "$UNFILLED" "fail"
+          has "unfilled: empty Summary" "$UNFILLED_PROBLEMS" 'Section "## Summary" is empty'
+          has "unfilled: empty How it was tested" "$UNFILLED_PROBLEMS" 'Section "## How it was tested" is empty'
+          check "free-form body fails" "$FREE" "fail"
+          has "free-form: bad title" "$FREE_PROBLEMS" "Title is not Conventional Commits"
+          has "free-form: no How it was tested" "$FREE_PROBLEMS" 'Missing section "## How it was tested"'
+          has "free-form: no Checklist" "$FREE_PROBLEMS" 'Missing section "## Checklist"'
+          check "bot author skipped" "$BOT" "skipped"
+          check "release-please branch skipped" "$RELEASE" "skipped"
+          exit "$fail"
