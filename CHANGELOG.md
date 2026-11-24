@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.1](https://github.com/polinom-io/px-workflows-public/compare/v0.5.0...v0.5.1) (2026-11-24)
+
+
+### Bug Fixes
+
+* reject negations after the secrets header in gitignore check ([#17](https://github.com/polinom-io/px-workflows-public/issues/17)) ([3fccde6](https://github.com/polinom-io/px-workflows-public/commit/3fccde6bdac1e20ff03d7a7191d5ea9987d0a224))
+
 ## [0.5.0](https://github.com/polinom-io/px-workflows-public/compare/v0.4.0...v0.5.0) (2026-11-24)
 
 
