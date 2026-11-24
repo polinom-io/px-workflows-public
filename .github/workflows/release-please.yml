@@ -8,6 +8,10 @@
 # To publish a package, call publish-node.yml from a second job gated on the
 # `release_created` output (see that file's header).
 #
+# Runs are serialized per ref (concurrency group `release-please-<ref>`, never
+# cancelled). Callers must not define their own concurrency group with that same
+# name: the called job would wait on its own caller run.
+#
 # Caller example (pin this workflow by full commit SHA; pass secrets explicitly,
 # never `secrets: inherit`):
 #
@@ -59,6 +63,9 @@ jobs:
   release-please:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    concurrency:
+      group: release-please-${{ github.ref }}
+      cancel-in-progress: false
     permissions:
       contents: read
     outputs:
