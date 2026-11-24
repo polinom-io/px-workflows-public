@@ -39,6 +39,24 @@ on:
         description: Fail on vulnerabilities whose highest CVSS score is at or above this
         type: number
         default: 7
+      osv-path:
+        description: Directory OSV-Scanner scans recursively, relative to the repo root
+        type: string
+        default: .
+      osv-enforce:
+        description: Fail the job on findings at or above osv-min-cvss (false only reports, for tests)
+        type: boolean
+        default: true
+    outputs:
+      osv-result:
+        description: "none (no vulnerabilities), skipped (no lockfiles) or found"
+        value: ${{ jobs.dependencies.outputs.result }}
+      osv-findings:
+        description: Vulnerability groups found, any severity
+        value: ${{ jobs.dependencies.outputs.findings }}
+      osv-high:
+        description: Vulnerability groups at or above osv-min-cvss
+        value: ${{ jobs.dependencies.outputs.high }}
 
 permissions:
   contents: read
@@ -80,6 +98,10 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: read
+    outputs:
+      result: ${{ steps.scan.outputs.result }}
+      findings: ${{ steps.scan.outputs.findings }}
+      high: ${{ steps.scan.outputs.high }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -95,16 +117,19 @@ jobs:
           install -m 0755 "${RUNNER_TEMP}/${asset}" "${RUNNER_TEMP}/osv-scanner"
 
       - name: Scan lockfiles for known vulnerabilities
+        id: scan
         env:
           MIN_CVSS: ${{ inputs.osv-min-cvss }}
+          SCAN_PATH: ${{ inputs.osv-path }}
+          ENFORCE: ${{ inputs.osv-enforce }}
         run: |
           report="$RUNNER_TEMP/osv.json"
           code=0
-          "$RUNNER_TEMP/osv-scanner" scan source -r . --format json --output-file "$report" || code=$?
+          "$RUNNER_TEMP/osv-scanner" scan source -r "$SCAN_PATH" --format json --output-file "$report" || code=$?
           # 0: no vulnerabilities, 1: vulnerabilities found, 128: no lockfiles found.
           case "$code" in
-            0) echo "No known vulnerabilities."; exit 0 ;;
-            128) echo "No lockfiles found; skipping."; exit 0 ;;
+            0) echo "No known vulnerabilities."; printf 'result=none\nfindings=0\nhigh=0\n' >> "$GITHUB_OUTPUT"; exit 0 ;;
+            128) echo "No lockfiles found; skipping."; printf 'result=skipped\nfindings=0\nhigh=0\n' >> "$GITHUB_OUTPUT"; exit 0 ;;
             1) ;;
             *) echo "::error::osv-scanner exited with $code"; exit "$code" ;;
           esac
@@ -119,7 +144,13 @@ jobs:
             echo '|---|---|---|---|---|'
             awk -F'\t' '{printf "| %s | %s | %s | %s | %s |\n", $1, $2, $3, $4, $5}' "$RUNNER_TEMP/osv.tsv"
           } >> "$GITHUB_STEP_SUMMARY"
-          high=$(awk -F'\t' -v min="$MIN_CVSS" '$1 >= min' "$RUNNER_TEMP/osv.tsv" | wc -l)
+          findings=$(wc -l < "$RUNNER_TEMP/osv.tsv" | tr -d ' ')
+          high=$(awk -F'\t' -v min="$MIN_CVSS" '$1 >= min' "$RUNNER_TEMP/osv.tsv" | wc -l | tr -d ' ')
+          printf 'result=found\nfindings=%s\nhigh=%s\n' "$findings" "$high" >> "$GITHUB_OUTPUT"
+          if [ "$high" -gt 0 ] && [ "$ENFORCE" = "false" ]; then
+            echo "::warning::${high} vulnerability group(s) at CVSS >= ${MIN_CVSS} (osv-enforce: false, not failing)."
+            exit 0
+          fi
           if [ "$high" -gt 0 ]; then
             echo "::error::${high} vulnerability group(s) at CVSS >= ${MIN_CVSS}; see the job summary."
             exit 1

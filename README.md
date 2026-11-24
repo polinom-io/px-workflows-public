@@ -39,8 +39,9 @@ jobs:
     uses: polinom-io/px-workflows-public/.github/workflows/security.yml@<sha> # vX.Y.Z
     # with:
     #   osv-min-cvss: 7    # fail threshold
+    #   osv-path: .        # directory scanned recursively
     #   osv-scan: false    # e.g. no dependencies at all
 ```
 
-Repos without a lockfile pass the `dependencies` job with a skip message.
+Repos without a lockfile pass the `dependencies` job with a skip message. Outputs `osv-result` (`none`, `skipped`, `found`), `osv-findings` and `osv-high` report what the scan saw. `osv-enforce: false` reports without failing; this repo's tests use it against `test/fixtures/` so the gate is proven to fire.
 

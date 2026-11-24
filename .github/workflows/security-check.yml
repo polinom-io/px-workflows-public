@@ -1,5 +1,9 @@
 # Runs this repo's own reusable security.yml by local path, so changes to it are
 # tested on the PR that makes them (and the repo itself gets scanned).
+#
+# The OSV tests scan test/fixtures/osv-vulnerable (lodash 4.17.15) with
+# osv-enforce: false and assert the outputs, so the run stays green while still
+# proving the scan finds vulnerabilities and applies the CVSS threshold.
 name: security-check
 
 on:
@@ -13,7 +17,56 @@ permissions:
   contents: read
 
 jobs:
+  # The repo itself: gitleaks over history; OSV over .github (no lockfiles), which
+  # also exercises the no-lockfile skip and keeps the fixture out.
   security:
     permissions:
       contents: read
     uses: ./.github/workflows/security.yml
+    with:
+      osv-path: .github
+
+  osv-detects:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/security.yml
+    with:
+      gitleaks: false
+      osv-path: test/fixtures/osv-vulnerable
+      osv-enforce: false
+
+  osv-threshold:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/security.yml
+    with:
+      gitleaks: false
+      osv-path: test/fixtures/osv-vulnerable
+      osv-min-cvss: 10.1   # above any CVSS score
+      osv-enforce: false
+
+  assert:
+    needs: [security, osv-detects, osv-threshold]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Assert scan outcomes
+        env:
+          SELF_RESULT: ${{ needs.security.outputs.osv-result }}
+          DETECT_RESULT: ${{ needs.osv-detects.outputs.osv-result }}
+          DETECT_HIGH: ${{ needs.osv-detects.outputs.osv-high }}
+          THRESH_FINDINGS: ${{ needs.osv-threshold.outputs.osv-findings }}
+          THRESH_HIGH: ${{ needs.osv-threshold.outputs.osv-high }}
+          JOB_RESULTS: ${{ needs.security.result }} ${{ needs.osv-detects.result }} ${{ needs.osv-threshold.result }}
+        run: |
+          fail=0
+          check() { if [ "$2" = "$3" ]; then echo "ok   $1"; else echo "::error::$1: expected '$3', got '$2'"; fail=1; fi; }
+          check "all scan jobs succeed" "$JOB_RESULTS" "success success success"
+          check "repo scan skips (no lockfiles)" "$SELF_RESULT" "skipped"
+          check "fixture: vulnerabilities found" "$DETECT_RESULT" "found"
+          if [ "${DETECT_HIGH:-0}" -gt 0 ]; then echo "ok   fixture: $DETECT_HIGH group(s) at CVSS >= 7"; else echo "::error::fixture: expected findings at CVSS >= 7, got ${DETECT_HIGH:-none}"; fail=1; fi
+          if [ "${THRESH_FINDINGS:-0}" -gt 0 ]; then echo "ok   threshold: $THRESH_FINDINGS finding(s) parsed"; else echo "::error::threshold: expected parsed findings, got ${THRESH_FINDINGS:-none}"; fail=1; fi
+          check "threshold 10.1: none counted as high" "$THRESH_HIGH" "0"
+          exit "$fail"
