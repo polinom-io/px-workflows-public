@@ -1,0 +1,100 @@
+# Tests gitignore-check.yml against the fixtures in test/fixtures/gitignore/ with
+# enforce: false, which reports without failing; the assert job checks each
+# outcome so the run stays green. This repo's own .gitignore is not checked: it
+# has no stack or secrets blocks.
+name: gitignore-check-test
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/gitignore-check.yml
+      - .github/workflows/gitignore-check-test.yml
+      - test/fixtures/gitignore/**
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/gitignore-check.yml
+      - .github/workflows/gitignore-check-test.yml
+      - test/fixtures/gitignore/**
+
+permissions:
+  contents: read
+
+jobs:
+  t-valid:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/gitignore-check.yml
+    with:
+      working-directory: test/fixtures/gitignore/valid
+      enforce: false
+
+  t-no-snippets-dir:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/gitignore-check.yml
+    with:
+      working-directory: test/fixtures/gitignore/no-snippets-dir
+      enforce: false
+
+  t-negation-in-snippet:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/gitignore-check.yml
+    with:
+      working-directory: test/fixtures/gitignore/negation-in-snippet
+      enforce: false
+
+  t-secrets-not-last:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/gitignore-check.yml
+    with:
+      working-directory: test/fixtures/gitignore/secrets-not-last
+      enforce: false
+
+  t-missing-header:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/gitignore-check.yml
+    with:
+      working-directory: test/fixtures/gitignore/missing-header
+      enforce: false
+
+  assert:
+    needs: [t-valid, t-no-snippets-dir, t-negation-in-snippet, t-secrets-not-last, t-missing-header]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Assert outcomes
+        env:
+          JOBS: >-
+            ${{ needs.t-valid.result }} ${{ needs.t-no-snippets-dir.result }}
+            ${{ needs.t-negation-in-snippet.result }} ${{ needs.t-secrets-not-last.result }}
+            ${{ needs.t-missing-header.result }}
+          VALID: ${{ needs.t-valid.outputs.result }}
+          VALID_PROBLEMS: ${{ needs.t-valid.outputs.problems }}
+          NODIR: ${{ needs.t-no-snippets-dir.outputs.result }}
+          NODIR_PROBLEMS: ${{ needs.t-no-snippets-dir.outputs.problems }}
+          NEG: ${{ needs.t-negation-in-snippet.outputs.result }}
+          NEG_PROBLEMS: ${{ needs.t-negation-in-snippet.outputs.problems }}
+          LAST: ${{ needs.t-secrets-not-last.outputs.result }}
+          LAST_PROBLEMS: ${{ needs.t-secrets-not-last.outputs.problems }}
+          MISSING: ${{ needs.t-missing-header.outputs.result }}
+          MISSING_PROBLEMS: ${{ needs.t-missing-header.outputs.problems }}
+        run: |
+          fail=0
+          check() { if [ "$2" = "$3" ]; then echo "ok   $1"; else echo "::error::$1: expected '$3', got '$2'"; fail=1; fi; }
+          has() { case "$2" in *"$3"*) echo "ok   $1";; *) echo "::error::$1: '$3' not in '$2'"; fail=1;; esac; }
+          check "all test jobs succeed" "$JOBS" "success success success success success"
+          check "valid passes (problems: $VALID_PROBLEMS)" "$VALID" "pass"
+          check "missing snippets dir passes (problems: $NODIR_PROBLEMS)" "$NODIR" "pass"
+          check "negation in snippet fails" "$NEG" "fail"
+          has "negation: file:line reported" "$NEG_PROBLEMS" "gitignore/node-typescript.gitignore:3: negation"
+          check "secrets block not last fails" "$LAST" "fail"
+          has "not last: later header reported" "$LAST_PROBLEMS" ".gitignore:5: block header after the secrets block"
+          check "missing secrets header fails" "$MISSING" "fail"
+          has "missing: header named" "$MISSING_PROBLEMS" ".gitignore: missing header"
+          exit "$fail"

@@ -1,0 +1,3 @@
+# --- Stack: node-typescript ---
+node_modules/
+.env

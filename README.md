@@ -18,6 +18,7 @@ jobs:
 | [`publish-node.yml`](.github/workflows/publish-node.yml) | Publish a release tag to GitHub Packages after the CI gates |
 | [`security.yml`](.github/workflows/security.yml) | gitleaks over the full git history (`secrets` job) and OSV-Scanner on lockfiles, failing at CVSS >= 7 (`dependencies` job) |
 | [`pr-standard.yml`](.github/workflows/pr-standard.yml) | PR title (Conventional Commit, ≤ 72 chars, all PRs) and body sections Summary, Test plan and Checklist (human and agent PRs) |
+| [`gitignore-check.yml`](.github/workflows/gitignore-check.yml) | `.gitignore` keeps the secrets block last; stack snippets in `gitignore/` have no `!` lines (`check` job) |
 
 Inputs, required permissions and caller examples are in each file's header.
 
