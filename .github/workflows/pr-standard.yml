@@ -1,0 +1,162 @@
+# Reusable check that a pull request follows the org PR template
+# (polinom-io/.github: .github/pull_request_template.md):
+#   - title in Conventional Commits form (it becomes the squash commit);
+#   - body with "## Summary" and "## How it was tested", each with real text
+#     (HTML comments don't count), and "## Checklist" with the template's five
+#     items, ticked or not (ticking is the author's statement).
+# Checklist items are matched by a stable keyword each (signed, secret,
+# personal data, reusable workflow, docs), so rewording the template doesn't
+# break every repo at once.
+#
+# Skipped: authors of type Bot (release-please App, Dependabot) and head branches
+# release-please--*, px-context/* and dependabot/*.
+#
+# Title and body are read from the event through env vars, never interpolated
+# into a script.
+#
+# Caller example (pin by full commit SHA). Include `edited` so fixing the body
+# re-runs the check; the check is named `<caller job> / pr-body`:
+#
+#   on:
+#     pull_request:
+#       types: [opened, edited, synchronize, reopened]
+#   permissions:
+#     contents: read
+#   jobs:
+#     pr-standard:
+#       permissions:
+#         contents: read
+#       uses: polinom-io/px-workflows-public/.github/workflows/pr-standard.yml@<sha> # vX.Y.Z
+name: pr-standard
+
+on:
+  workflow_call:
+    inputs:
+      check-title:
+        description: Also require a Conventional Commits title
+        type: boolean
+        default: true
+      test-mode:
+        description: For this repo's tests only. Check the test-* inputs instead of the event and report without failing
+        type: boolean
+        default: false
+      test-title:
+        type: string
+        default: ""
+      test-body:
+        type: string
+        default: ""
+      test-author-type:
+        type: string
+        default: User
+      test-head-ref:
+        type: string
+        default: ""
+    outputs:
+      result:
+        description: "pass, fail or skipped"
+        value: ${{ jobs.pr-body.outputs.result }}
+      problems:
+        description: Problems found, separated by "; "
+        value: ${{ jobs.pr-body.outputs.problems }}
+
+permissions:
+  contents: read
+
+jobs:
+  pr-body:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      result: ${{ steps.check.outputs.result }}
+      problems: ${{ steps.check.outputs.problems }}
+    steps:
+      - name: Check title and body against the PR template
+        id: check
+        env:
+          TEST_MODE: ${{ inputs.test-mode }}
+          CHECK_TITLE: ${{ inputs.check-title }}
+          EVENT_TITLE: ${{ github.event.pull_request.title }}
+          EVENT_BODY: ${{ github.event.pull_request.body }}
+          EVENT_AUTHOR_TYPE: ${{ github.event.pull_request.user.type }}
+          EVENT_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          TEST_TITLE: ${{ inputs.test-title }}
+          TEST_BODY: ${{ inputs.test-body }}
+          TEST_AUTHOR_TYPE: ${{ inputs.test-author-type }}
+          TEST_HEAD_REF: ${{ inputs.test-head-ref }}
+        shell: python3 {0}
+        run: |
+          import os, re, sys
+
+          env = os.environ
+          test = env["TEST_MODE"] == "true"
+          src = "TEST_" if test else "EVENT_"
+          title = env.get(src + "TITLE", "")
+          body = (env.get(src + "BODY", "") or "").replace("\r\n", "\n")
+          author_type = env.get(src + "AUTHOR_TYPE", "")
+          head_ref = env.get(src + "HEAD_REF", "")
+
+          def finish(result, problems):
+              with open(env["GITHUB_OUTPUT"], "a") as out:
+                  out.write(f"result={result}\n")
+                  out.write("problems=" + "; ".join(problems) + "\n")
+              with open(env["GITHUB_STEP_SUMMARY"], "a") as summary:
+                  summary.write(f"### PR template check: {result}\n")
+                  for p in problems:
+                      summary.write(f"- {p}\n")
+              for p in problems:
+                  print(f"::error::{p}")
+              if result == "fail" and not test:
+                  sys.exit(1)
+              sys.exit(0)
+
+          if not test and not title and not head_ref:
+              print("::error::Not a pull_request event; call this workflow from on: pull_request.")
+              sys.exit(1)
+
+          if author_type == "Bot" or head_ref.startswith(("release-please--", "px-context/", "dependabot/")):
+              print(f"Skipped: author type {author_type!r}, head branch {head_ref!r}.")
+              finish("skipped", [])
+
+          problems = []
+
+          types = "feat|fix|docs|chore|ci|refactor|test|build|perf|style|revert"
+          if env["CHECK_TITLE"] == "true" and not re.fullmatch(rf"(?:{types})(?:\([^()\s]+\))?!?: \S.*", title):
+              problems.append(f"Title is not Conventional Commits (<type>(<scope>)?: <description>, types: {types.replace('|', ' ')})")
+
+          # Split the body into "## " sections; HTML comments (template hints) don't count as text.
+          text = re.sub(r"<!--.*?-->", "", body, flags=re.S)
+          sections = {}
+          current = None
+          for line in text.split("\n"):
+              m = re.match(r"^##\s+(.+?)\s*$", line)
+              if m:
+                  current = m.group(1).strip().lower()
+                  sections.setdefault(current, [])
+              elif current is not None:
+                  sections[current].append(line)
+
+          for name in ("summary", "how it was tested"):
+              if name not in sections:
+                  problems.append(f'Missing section "## {name.capitalize()}"')
+              elif not "\n".join(sections[name]).strip():
+                  problems.append(f'Section "## {name.capitalize()}" is empty')
+
+          if "checklist" not in sections:
+              problems.append('Missing section "## Checklist"')
+          else:
+              items = [l for l in sections["checklist"] if re.match(r"^\s*[-*]\s+\[[ xX]\]\s+", l)]
+              keywords = {
+                  "signed": "Commits are signed",
+                  "secret": "No secrets, keys or tokens",
+                  "personal data": "No real personal data",
+                  "reusable workflow": "Shared reusable workflow considered",
+                  "docs": "Docs updated",
+              }
+              for key, label in keywords.items():
+                  if not any(key in l.lower() for l in items):
+                      problems.append(f'Checklist item missing: "{label}"')
+
+          finish("fail" if problems else "pass", problems)

@@ -14,6 +14,7 @@ Polinom.io rules are synced into `.ai/` from px-context; edit them there. If you
 - `.github/workflows/publish-node.yml`: publish a release tag to GitHub Packages (`packages: write`, only in repos that publish).
 - `.github/workflows/release.yml`: releases this repo with its own `release-please.yml`; tags are `vX.Y.Z`.
 - `.github/workflows/security.yml`: gitleaks and OSV-Scanner (pinned binaries, sha256-verified); `security-check.yml` runs it on this repo.
+- `.github/workflows/pr-standard.yml`: PR title and body against the org PR template; `pr-standard-check.yml` checks this repo's PRs and tests it with fixtures.
 - `.github/workflows/lint.yml`: actionlint on PRs that change `.github/`; bump its pinned version and sha256 by hand.
 - `.github/dependabot.yml`: weekly updates of the pinned actions.
 
