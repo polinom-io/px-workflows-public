@@ -1,0 +1,8 @@
+# --- Stack: node-typescript ---
+node_modules/
+
+# --- Secrets and sensitive data (never commit) ---
+.env
+!.env.example
+*.pem
+!.env
