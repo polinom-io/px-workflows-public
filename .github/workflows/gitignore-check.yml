@@ -1,0 +1,115 @@
+# Reusable check that .gitignore keeps the secret rules last, so no rule pasted
+# above them (for example a stack snippet with a `!` line) can re-include a
+# .env file or a key. Git applies the last matching rule.
+#
+# Fails when:
+#   - any `<snippets-dir>/*.gitignore` has a line starting with `!` (the
+#     directory is optional: repos created from a template delete it);
+#   - `.gitignore` has no `<secrets-header>` line, or that header is not the last
+#     line starting with `# --- `. `!` lines inside the secrets block (such as
+#     `!.env.example`) are allowed.
+# Each violation is printed as file:line. Only file contents are read; no PR text
+# reaches the script.
+#
+# Caller example (pin by full commit SHA); the check is named `<caller job> / check`:
+#
+#   on:
+#     pull_request:
+#     push:
+#       branches: [main]
+#   permissions:
+#     contents: read
+#   jobs:
+#     gitignore:
+#       permissions:
+#         contents: read
+#       uses: polinom-io/px-workflows-public/.github/workflows/gitignore-check.yml@<sha> # vX.Y.Z
+name: gitignore-check
+
+on:
+  workflow_call:
+    inputs:
+      working-directory:
+        description: Directory that holds .gitignore and the snippets directory
+        type: string
+        default: .
+      secrets-header:
+        description: Header line that opens the secrets block, which must be the last block
+        type: string
+        default: "# --- Secrets and sensitive data (never commit) ---"
+      snippets-dir:
+        description: Directory with per-stack *.gitignore snippets, relative to working-directory; skipped when missing
+        type: string
+        default: gitignore
+      enforce:
+        description: Fail the job on violations. This repo's tests set it to false and assert the outputs
+        type: boolean
+        default: true
+    outputs:
+      result:
+        description: "pass or fail"
+        value: ${{ jobs.check.outputs.result }}
+      problems:
+        description: Violations found, separated by "; "
+        value: ${{ jobs.check.outputs.problems }}
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      result: ${{ steps.check.outputs.result }}
+      problems: ${{ steps.check.outputs.problems }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check .gitignore order
+        id: check
+        working-directory: ${{ inputs.working-directory }}
+        env:
+          SECRETS_HEADER: ${{ inputs.secrets-header }}
+          SNIPPETS_DIR: ${{ inputs.snippets-dir }}
+          ENFORCE: ${{ inputs.enforce }}
+        run: |
+          problems=()
+
+          if [ -d "$SNIPPETS_DIR" ]; then
+            while IFS= read -r hit; do
+              problems+=("${hit}: negation (!) not allowed in a stack snippet")
+            done < <(find "$SNIPPETS_DIR" -maxdepth 1 -type f -name '*.gitignore' -print0 \
+                       | sort -z | xargs -0 -r grep -Hn '^!' | cut -d: -f1,2)
+          fi
+
+          if [ ! -f .gitignore ]; then
+            problems+=(".gitignore: file not found")
+          else
+            secrets_line=$(grep -nxF -- "$SECRETS_HEADER" .gitignore | tail -n1 | cut -d: -f1)
+            if [ -z "$secrets_line" ]; then
+              problems+=(".gitignore: missing header \"$SECRETS_HEADER\"")
+            else
+              while IFS= read -r later; do
+                problems+=(".gitignore:${later}: block header after the secrets block (line ${secrets_line}); the secrets block must be last")
+              done < <(awk -v from="$secrets_line" 'NR > from && /^# --- / { print NR }' .gitignore)
+            fi
+          fi
+
+          if [ "${#problems[@]}" -eq 0 ]; then result=pass; else result=fail; fi
+          joined=$(printf '%s; ' "${problems[@]}"); joined=${joined%; }
+          [ "$result" = pass ] && joined=""
+          {
+            echo "result=$result"
+            echo "problems=$joined"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "### gitignore check: $result"
+            for p in "${problems[@]}"; do echo "- $p"; done
+          } >> "$GITHUB_STEP_SUMMARY"
+          for p in "${problems[@]}"; do echo "::error::$p"; done
+          if [ "$result" = fail ] && [ "$ENFORCE" = true ]; then exit 1; fi
