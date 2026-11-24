@@ -93,7 +93,7 @@ jobs:
     uses: ./.github/workflows/pr-standard.yml
     with:
       test-mode: true
-      test-title: "Feat: Add a deliberately long description that goes well past the limit."
+      test-title: "Feat: Add a deliberately long description that goes well past the seventy-two character limit."
       test-author-type: Bot
 
   t-human-on-bot-branch:
