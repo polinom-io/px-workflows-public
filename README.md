@@ -7,6 +7,7 @@ jobs:
   ci:
     permissions:
       contents: read
+      packages: read   # ci-node requires it; set github-packages: true to install @polinom-io packages
     uses: polinom-io/px-workflows-public/.github/workflows/ci-node.yml@<sha> # vX.Y.Z
 ```
 

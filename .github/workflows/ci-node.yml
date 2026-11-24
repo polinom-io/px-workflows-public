@@ -10,10 +10,15 @@
 #     ci:
 #       permissions:
 #         contents: read
+#         packages: read   # required by ci-node, even without github-packages
 #       uses: polinom-io/px-workflows-public/.github/workflows/ci-node.yml@<sha> # vX.Y.Z
 #       with:
 #         lint-script: check
 #         build-script: ""
+#         github-packages: true   # only if it depends on @polinom-io packages
+#
+# Callers must grant `packages: read`: a called workflow can't get more than its
+# caller grants, and GitHub checks that before any job runs.
 #
 # Run `pnpm audit` on pull requests that change package.json, pnpm-lock.yaml or
 # pnpm-workspace.yaml, on every push to main and on a weekly schedule: set those
@@ -43,6 +48,10 @@ on:
         description: Run `pnpm audit --audit-level high` (dev dependencies included)
         type: boolean
         default: true
+      github-packages:
+        description: Authenticate pnpm to GitHub Packages for @polinom-io packages
+        type: boolean
+        default: false
       working-directory:
         description: Directory holding package.json, relative to the repo root
         type: string
@@ -61,6 +70,7 @@ jobs:
     timeout-minutes: ${{ inputs.timeout-minutes }}
     permissions:
       contents: read
+      packages: read   # install @polinom-io packages from GitHub Packages
     defaults:
       run:
         working-directory: ${{ inputs.working-directory }}
@@ -78,6 +88,17 @@ jobs:
           node-version-file: ${{ inputs.working-directory }}/.nvmrc
           cache: pnpm
           cache-dependency-path: ${{ inputs.working-directory }}/pnpm-lock.yaml
+
+      - name: Authenticate to GitHub Packages
+        if: inputs.github-packages
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # pnpm 12 reads credentials only from the user config, never from the repo's .npmrc.
+          {
+            echo "@polinom-io:registry=https://npm.pkg.github.com"
+            echo "//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}"
+          } >> ~/.npmrc
 
       - run: pnpm install --frozen-lockfile
 
