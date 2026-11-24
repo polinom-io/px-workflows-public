@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/polinom-io/px-workflows-public/compare/v0.4.0...v0.5.0) (2026-11-24)
+
+
+### Features
+
+* add reusable gitignore order check ([#15](https://github.com/polinom-io/px-workflows-public/issues/15)) ([5d6d487](https://github.com/polinom-io/px-workflows-public/commit/5d6d4879370e9d67e72a7da8bbc1c47093fff1e2))
+
 ## [0.4.0](https://github.com/polinom-io/px-workflows-public/compare/v0.3.0...v0.4.0) (2026-11-24)
 
 
