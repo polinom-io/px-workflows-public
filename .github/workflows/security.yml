@@ -1,0 +1,127 @@
+# Reusable security scans: secrets in the full git history (gitleaks) and known
+# vulnerabilities in lockfiles (OSV-Scanner). Job names `secrets` and
+# `dependencies` are stable so callers can make them required checks.
+#
+# Both tools are the official release binaries, verified against a pinned sha256
+# (no third-party action; gitleaks-action needs a licence for org repos).
+# Dependabot doesn't update them: bump each *_VERSION and *_SHA256 together from
+# the release asset digest (gh api repos/<owner>/<repo>/releases/tags/<tag>).
+#
+# Caller example (pin this workflow by full commit SHA; no secrets needed):
+#
+#   on:
+#     pull_request:
+#     push:
+#       branches: [main]
+#     schedule:
+#       - cron: "0 6 * * 1"
+#   permissions:
+#     contents: read
+#   jobs:
+#     security:
+#       permissions:
+#         contents: read
+#       uses: polinom-io/px-workflows-public/.github/workflows/security.yml@<sha> # vX.Y.Z
+name: security
+
+on:
+  workflow_call:
+    inputs:
+      gitleaks:
+        description: Scan the full git history for secrets
+        type: boolean
+        default: true
+      osv-scan:
+        description: Scan lockfiles for known vulnerabilities (skips when none exist)
+        type: boolean
+        default: true
+      osv-min-cvss:
+        description: Fail on vulnerabilities whose highest CVSS score is at or above this
+        type: number
+        default: 7
+
+permissions:
+  contents: read
+
+env:
+  GITLEAKS_VERSION: 8.30.1
+  GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+  OSV_VERSION: 2.7.1
+  OSV_SHA256: fb7dab19a8bd9bbe5c3189f09d4b7ee1820c9553a23bac202648a56efd2f6ee8
+
+jobs:
+  secrets:
+    if: inputs.gitleaks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install gitleaks
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          asset="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          gh release download "v${GITLEAKS_VERSION}" -R gitleaks/gitleaks -p "$asset" -D "$RUNNER_TEMP"
+          echo "${GITLEAKS_SHA256}  ${RUNNER_TEMP}/${asset}" | sha256sum -c -
+          tar -xzf "${RUNNER_TEMP}/${asset}" -C "$RUNNER_TEMP" gitleaks
+
+      - name: Scan git history for secrets
+        run: '"$RUNNER_TEMP/gitleaks" git . --redact --no-banner --verbose'
+
+  dependencies:
+    if: inputs.osv-scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install OSV-Scanner
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          asset="osv-scanner_linux_amd64"
+          gh release download "v${OSV_VERSION}" -R google/osv-scanner -p "$asset" -D "$RUNNER_TEMP"
+          echo "${OSV_SHA256}  ${RUNNER_TEMP}/${asset}" | sha256sum -c -
+          install -m 0755 "${RUNNER_TEMP}/${asset}" "${RUNNER_TEMP}/osv-scanner"
+
+      - name: Scan lockfiles for known vulnerabilities
+        env:
+          MIN_CVSS: ${{ inputs.osv-min-cvss }}
+        run: |
+          report="$RUNNER_TEMP/osv.json"
+          code=0
+          "$RUNNER_TEMP/osv-scanner" scan source -r . --format json --output-file "$report" || code=$?
+          # 0: no vulnerabilities, 1: vulnerabilities found, 128: no lockfiles found.
+          case "$code" in
+            0) echo "No known vulnerabilities."; exit 0 ;;
+            128) echo "No lockfiles found; skipping."; exit 0 ;;
+            1) ;;
+            *) echo "::error::osv-scanner exited with $code"; exit "$code" ;;
+          esac
+          # Fail only on groups whose highest CVSS score reaches MIN_CVSS; list the rest.
+          jq -r --argjson min "$MIN_CVSS" '
+            .results[] as $r | $r.packages[] as $p | $p.groups[]
+            | [((.max_severity // "") | tonumber? // 0), $r.source.path, $p.package.name, $p.package.version, (.ids | join(","))]
+            | @tsv' "$report" | sort -rn > "$RUNNER_TEMP/osv.tsv"
+          {
+            echo "### OSV-Scanner findings (fail at CVSS >= ${MIN_CVSS})"
+            echo '| CVSS | Lockfile | Package | Version | IDs |'
+            echo '|---|---|---|---|---|'
+            awk -F'\t' '{printf "| %s | %s | %s | %s | %s |\n", $1, $2, $3, $4, $5}' "$RUNNER_TEMP/osv.tsv"
+          } >> "$GITHUB_STEP_SUMMARY"
+          high=$(awk -F'\t' -v min="$MIN_CVSS" '$1 >= min' "$RUNNER_TEMP/osv.tsv" | wc -l)
+          if [ "$high" -gt 0 ]; then
+            echo "::error::${high} vulnerability group(s) at CVSS >= ${MIN_CVSS}; see the job summary."
+            exit 1
+          fi
+          echo "Only vulnerabilities below CVSS ${MIN_CVSS}; see the job summary."

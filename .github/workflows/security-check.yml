@@ -1,0 +1,19 @@
+# Runs this repo's own reusable security.yml by local path, so changes to it are
+# tested on the PR that makes them (and the repo itself gets scanned).
+name: security-check
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "0 6 * * 1"   # weekly
+
+permissions:
+  contents: read
+
+jobs:
+  security:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/security.yml
