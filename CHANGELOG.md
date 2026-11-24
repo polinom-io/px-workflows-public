@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.3.0](https://github.com/polinom-io/px-workflows-public/compare/v0.2.0...v0.3.0) (2026-11-24)
+
+
+### ⚠ BREAKING CHANGES
+
+* **ci-node:** callers of ci-node.yml must grant packages: read in addition to contents: read, otherwise the run fails at startup.
+
+### Features
+
+* **ci-node:** install [@polinom-io](https://github.com/polinom-io) packages from GitHub Packages ([#9](https://github.com/polinom-io/px-workflows-public/issues/9)) ([c2b8030](https://github.com/polinom-io/px-workflows-public/commit/c2b8030c527a5b73566104464096427e4cf13ee7))
+* **release-please:** serialize runs per ref with concurrency ([#10](https://github.com/polinom-io/px-workflows-public/issues/10)) ([f456ca2](https://github.com/polinom-io/px-workflows-public/commit/f456ca270e715b646e3ea92e97d8f0a23a2588d0))
+
 ## [0.2.0](https://github.com/polinom-io/px-workflows-public/compare/v0.1.0...v0.2.0) (2026-11-24)
 
 
