@@ -1,0 +1,95 @@
+# Tests ci-node.yml's cost controls in test-mode, which decides from test-draft
+# and test-changed-files and stops before installing; the assert job checks each
+# decision. Building itself is exercised by the repos that call ci-node.
+name: ci-node-check
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/ci-node.yml
+      - .github/workflows/ci-node-check.yml
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/ci-node.yml
+      - .github/workflows/ci-node-check.yml
+
+permissions:
+  contents: read
+
+jobs:
+  t-draft:
+    permissions:
+      contents: read
+      packages: read
+    uses: ./.github/workflows/ci-node.yml
+    with:
+      test-mode: true
+      test-draft: true
+      paths: src/*
+
+  t-docs-only:
+    permissions:
+      contents: read
+      packages: read
+    uses: ./.github/workflows/ci-node.yml
+    with:
+      test-mode: true
+      paths: |
+        src/*
+        package.json
+        pnpm-lock.yaml
+      test-changed-files: |
+        README.md
+        docs/setup.md
+
+  t-code-change:
+    permissions:
+      contents: read
+      packages: read
+    uses: ./.github/workflows/ci-node.yml
+    with:
+      test-mode: true
+      paths: |
+        src/*
+        package.json
+      test-changed-files: |
+        README.md
+        src/lib/invoice.ts
+
+  t-no-paths:
+    permissions:
+      contents: read
+      packages: read
+    uses: ./.github/workflows/ci-node.yml
+    with:
+      test-mode: true
+      test-changed-files: README.md
+
+  assert:
+    needs: [t-draft, t-docs-only, t-code-change, t-no-paths]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Assert outcomes
+        env:
+          DRAFT: ${{ needs.t-draft.result }}
+          DRAFT_RELEVANT: ${{ needs.t-draft.outputs.relevant }}
+          JOBS: >-
+            ${{ needs.t-docs-only.result }} ${{ needs.t-code-change.result }}
+            ${{ needs.t-no-paths.result }}
+          DOCS: ${{ needs.t-docs-only.outputs.relevant }}
+          CODE: ${{ needs.t-code-change.outputs.relevant }}
+          NOPATHS: ${{ needs.t-no-paths.outputs.relevant }}
+        run: |
+          fail=0
+          check() { if [ "$2" = "$3" ]; then echo "ok   $1"; else echo "::error::$1: expected '$3', got '$2'"; fail=1; fi; }
+          check "non-draft test jobs succeed" "$JOBS" "success success success"
+          case "$DRAFT" in success|skipped) echo "ok   draft: not failed ($DRAFT)";; *) echo "::error::draft: got '$DRAFT'"; fail=1;; esac
+          check "draft: job skipped (no decision output)" "$DRAFT_RELEVANT" ""
+          check "docs-only change: no build" "$DOCS" "false"
+          check "code change: builds" "$CODE" "true"
+          check "no paths filter: always builds" "$NOPATHS" "true"
+          exit "$fail"

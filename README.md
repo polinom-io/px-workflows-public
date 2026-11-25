@@ -13,7 +13,7 @@ jobs:
 
 | Workflow | Purpose |
 |---|---|
-| [`ci-node.yml`](.github/workflows/ci-node.yml) | pnpm + Node CI: typecheck, lint, test, build (each optional), `pnpm audit --audit-level high` |
+| [`ci-node.yml`](.github/workflows/ci-node.yml) | pnpm + Node CI: typecheck, lint, test, build (each optional), `pnpm audit --audit-level high`. Skips draft PRs; optional `paths` skips the build on PRs with no relevant change; the caller cancels superseded PR runs (see the file header) |
 | [`release-please.yml`](.github/workflows/release-please.yml) | Release PRs and tags with a GitHub App token |
 | [`publish-node.yml`](.github/workflows/publish-node.yml) | Publish a release tag to GitHub Packages after the CI gates |
 | [`security.yml`](.github/workflows/security.yml) | gitleaks over the full git history (`secrets` job) and OSV-Scanner on lockfiles, failing at CVSS >= 7 (`dependencies` job) |
