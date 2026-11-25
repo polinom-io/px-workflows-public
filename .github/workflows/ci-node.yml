@@ -4,8 +4,29 @@
 # `pnpm-lock.yaml`. Each script input names a package.json script; set it to ""
 # to skip that step.
 #
+# Cost controls (the pattern for any CI on expensive runners, such as macOS):
+#   - Draft PRs: the job is skipped, which counts as passing for a required
+#     check. Add `ready_for_review` to the caller's pull_request types so CI runs
+#     when the PR leaves draft.
+#   - Superseded PR runs: cancelled by the caller's concurrency group (below).
+#     Pushes to main are never cancelled.
+#   - `paths`: on pull requests, the job installs and builds only when a changed
+#     file matches one of these patterns; otherwise it reports success without
+#     building. Never filter a required workflow with `on: paths` (it would never
+#     report and the PR would stay blocked). Pushes and schedules always build.
+#
 # Caller example (pin this workflow by full commit SHA):
 #
+#   on:
+#     pull_request:
+#       types: [opened, synchronize, reopened, ready_for_review]
+#     push:
+#       branches: [main]
+#   permissions:
+#     contents: read
+#   concurrency:
+#     group: ci-${{ github.event.pull_request.number || github.ref }}
+#     cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 #   jobs:
 #     ci:
 #       permissions:
@@ -16,6 +37,10 @@
 #         lint-script: check
 #         build-script: ""
 #         github-packages: true   # only if it depends on @polinom-io packages
+#         paths: |                # optional; empty = always build
+#           src/*
+#           package.json
+#           pnpm-lock.yaml
 #
 # Callers must grant `packages: read`: a called workflow can't get more than its
 # caller grants, and GitHub checks that before any job runs.
@@ -60,12 +85,36 @@ on:
         description: Job timeout
         type: number
         default: 15
+      paths:
+        description: >-
+          Newline-separated shell patterns, relative to the repo root (`*` also
+          matches `/`). On pull requests the job builds only when a changed file
+          matches one. Empty = always build
+        type: string
+        default: ""
+      test-mode:
+        description: For this repo's tests only. Use test-draft and test-changed-files, decide, and stop before installing
+        type: boolean
+        default: false
+      test-draft:
+        type: boolean
+        default: false
+      test-changed-files:
+        description: Newline-separated changed files, used instead of the PR diff in test-mode
+        type: string
+        default: ""
+    outputs:
+      relevant:
+        description: "'true' when the job built (or would build, in test-mode); 'false' when no changed file matched `paths`; empty when the job was skipped as a draft"
+        value: ${{ jobs.ci.outputs.relevant }}
 
 permissions:
   contents: read
 
 jobs:
   ci:
+    # Draft PRs skip the whole job, so no runner minutes are spent.
+    if: github.event.pull_request.draft != true && !inputs.test-draft
     runs-on: ubuntu-latest
     timeout-minutes: ${{ inputs.timeout-minutes }}
     permissions:
@@ -74,23 +123,62 @@ jobs:
     defaults:
       run:
         working-directory: ${{ inputs.working-directory }}
+    outputs:
+      relevant: ${{ steps.changes.outputs.relevant }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: ${{ !inputs.test-mode }}
         with:
           persist-credentials: false
+          # A pull_request checkout is the merge commit; its first parent is the base tip.
+          fetch-depth: ${{ (github.event_name == 'pull_request' && inputs.paths != '') && 2 || 1 }}
 
-      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - name: Check changed paths
+        id: changes
+        working-directory: .
+        env:
+          PATTERNS: ${{ inputs.paths }}
+          TEST_MODE: ${{ inputs.test-mode }}
+          TEST_CHANGED: ${{ inputs.test-changed-files }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          if [ -z "$PATTERNS" ] || { [ "$TEST_MODE" != true ] && [ "$EVENT_NAME" != pull_request ]; }; then
+            echo "No paths filter for this run: building."
+            relevant=true
+          else
+            if [ "$TEST_MODE" = true ]; then changed=$TEST_CHANGED
+            else changed=$(git diff --name-only HEAD^1 HEAD); fi
+            relevant=false
+            while IFS= read -r file; do
+              [ -n "$file" ] || continue
+              while IFS= read -r pattern; do
+                [ -n "$pattern" ] || continue
+                # shellcheck disable=SC2053 # unquoted on purpose: pattern match
+                if [[ $file == $pattern ]]; then
+                  echo "Relevant change: $file (matches $pattern)"
+                  relevant=true
+                  break 2
+                fi
+              done <<< "$PATTERNS"
+            done <<< "$changed"
+            [ "$relevant" = true ] || echo "No changed file matches \`paths\`: skipping install and build; the job passes."
+          fi
+          echo "relevant=$relevant" >> "$GITHUB_OUTPUT"
+
+      - if: ${{ steps.changes.outputs.relevant == 'true' && !inputs.test-mode }}
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         with:
           package_json_file: ${{ inputs.working-directory }}/package.json
 
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      - if: ${{ steps.changes.outputs.relevant == 'true' && !inputs.test-mode }}
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: ${{ inputs.working-directory }}/.nvmrc
           cache: pnpm
           cache-dependency-path: ${{ inputs.working-directory }}/pnpm-lock.yaml
 
       - name: Authenticate to GitHub Packages
-        if: inputs.github-packages
+        if: ${{ steps.changes.outputs.relevant == 'true' && !inputs.test-mode && inputs.github-packages }}
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -100,33 +188,34 @@ jobs:
             echo "//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}"
           } >> ~/.npmrc
 
-      - run: pnpm install --frozen-lockfile
+      - if: ${{ steps.changes.outputs.relevant == 'true' && !inputs.test-mode }}
+        run: pnpm install --frozen-lockfile
 
       - name: Typecheck
-        if: inputs.typecheck-script != ''
+        if: ${{ steps.changes.outputs.relevant == 'true' && !inputs.test-mode && inputs.typecheck-script != '' }}
         run: pnpm run "$SCRIPT"
         env:
           SCRIPT: ${{ inputs.typecheck-script }}
 
       - name: Lint
-        if: inputs.lint-script != ''
+        if: ${{ steps.changes.outputs.relevant == 'true' && !inputs.test-mode && inputs.lint-script != '' }}
         run: pnpm run "$SCRIPT"
         env:
           SCRIPT: ${{ inputs.lint-script }}
 
       - name: Test
-        if: inputs.test-script != ''
+        if: ${{ steps.changes.outputs.relevant == 'true' && !inputs.test-mode && inputs.test-script != '' }}
         run: pnpm run "$SCRIPT"
         env:
           SCRIPT: ${{ inputs.test-script }}
 
       - name: Build
-        if: inputs.build-script != ''
+        if: ${{ steps.changes.outputs.relevant == 'true' && !inputs.test-mode && inputs.build-script != '' }}
         run: pnpm run "$SCRIPT"
         env:
           SCRIPT: ${{ inputs.build-script }}
 
       # GitHub creates no Dependabot alerts for pnpm 12 lockfiles, so CI audits instead.
       - name: Audit dependencies
-        if: inputs.audit
+        if: ${{ steps.changes.outputs.relevant == 'true' && !inputs.test-mode && inputs.audit }}
         run: pnpm audit --audit-level high
