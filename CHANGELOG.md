@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.0](https://github.com/polinom-io/px-workflows-public/compare/v0.6.0...v0.7.0) (2026-11-25)
+
+
+### Features
+
+* add reusable ios ci with macos cost controls ([#21](https://github.com/polinom-io/px-workflows-public/issues/21)) ([61e6f7c](https://github.com/polinom-io/px-workflows-public/commit/61e6f7c9af593767a23c468b29a83c219ce78b7c))
+
 ## [0.6.0](https://github.com/polinom-io/px-workflows-public/compare/v0.5.1...v0.6.0) (2026-11-25)
 
 
