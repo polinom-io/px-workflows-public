@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0](https://github.com/polinom-io/px-workflows-public/compare/v0.5.1...v0.6.0) (2026-11-25)
+
+
+### Features
+
+* **ci-node:** skip drafts and unchanged paths to cut ci cost ([#19](https://github.com/polinom-io/px-workflows-public/issues/19)) ([0843f12](https://github.com/polinom-io/px-workflows-public/commit/0843f12a8de11a4b2db69eb948afc05b2be96191))
+
 ## [0.5.1](https://github.com/polinom-io/px-workflows-public/compare/v0.5.0...v0.5.1) (2026-11-24)
 
 
