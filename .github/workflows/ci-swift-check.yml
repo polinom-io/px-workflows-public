@@ -1,0 +1,131 @@
+# Tests ci-swift.yml's decisions in test-mode, which runs only the ubuntu gate and
+# ci jobs and never starts a macOS runner; the assert job checks each decision.
+# Building is exercised by the repos that call ci-swift.
+name: ci-swift-check
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/ci-swift.yml
+      - .github/workflows/ci-swift-check.yml
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/ci-swift.yml
+      - .github/workflows/ci-swift-check.yml
+
+permissions:
+  contents: read
+
+jobs:
+  t-draft:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/ci-swift.yml
+    with:
+      project: App.xcodeproj
+      scheme: App
+      unit-test-target: AppTests
+      ui-test-target: AppUITests
+      paths: App/*
+      test-mode: true
+      test-draft: true
+
+  t-pr-docs-only:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/ci-swift.yml
+    with:
+      project: App.xcodeproj
+      scheme: App
+      unit-test-target: AppTests
+      ui-test-target: AppUITests
+      paths: |
+        App/*
+        App.xcodeproj/*
+      test-mode: true
+      test-changed-files: README.md
+
+  t-pr-code:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/ci-swift.yml
+    with:
+      project: App.xcodeproj
+      scheme: App
+      unit-test-target: AppTests
+      ui-test-target: AppUITests
+      paths: App/*
+      test-mode: true
+      test-changed-files: |
+        README.md
+        App/Views/Home.swift
+
+  t-pr-ui-opt-in:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/ci-swift.yml
+    with:
+      project: App.xcodeproj
+      scheme: App
+      unit-test-target: AppTests
+      ui-test-target: AppUITests
+      ui-tests: true
+      test-mode: true
+
+  t-push-main:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/ci-swift.yml
+    with:
+      project: App.xcodeproj
+      scheme: App
+      unit-test-target: AppTests
+      ui-test-target: AppUITests
+      paths: App/*
+      test-mode: true
+      test-event: push
+      test-changed-files: README.md
+
+  t-schedule:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/ci-swift.yml
+    with:
+      project: App.xcodeproj
+      scheme: App
+      unit-test-target: AppTests
+      ui-test-target: AppUITests
+      test-mode: true
+      test-event: schedule
+
+  assert:
+    needs: [t-draft, t-pr-docs-only, t-pr-code, t-pr-ui-opt-in, t-push-main, t-schedule]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Assert outcomes
+        env:
+          JOBS: >-
+            ${{ needs.t-draft.result }} ${{ needs.t-pr-docs-only.result }}
+            ${{ needs.t-pr-code.result }} ${{ needs.t-pr-ui-opt-in.result }}
+            ${{ needs.t-push-main.result }} ${{ needs.t-schedule.result }}
+          DRAFT: ${{ needs.t-draft.outputs.relevant }}
+          DOCS: ${{ needs.t-pr-docs-only.outputs.relevant }}/${{ needs.t-pr-docs-only.outputs.run-unit }}/${{ needs.t-pr-docs-only.outputs.run-ui }}
+          CODE: ${{ needs.t-pr-code.outputs.relevant }}/${{ needs.t-pr-code.outputs.run-unit }}/${{ needs.t-pr-code.outputs.run-ui }}
+          UIOPT: ${{ needs.t-pr-ui-opt-in.outputs.relevant }}/${{ needs.t-pr-ui-opt-in.outputs.run-unit }}/${{ needs.t-pr-ui-opt-in.outputs.run-ui }}
+          PUSH: ${{ needs.t-push-main.outputs.relevant }}/${{ needs.t-push-main.outputs.run-unit }}/${{ needs.t-push-main.outputs.run-ui }}
+          SCHED: ${{ needs.t-schedule.outputs.relevant }}/${{ needs.t-schedule.outputs.run-unit }}/${{ needs.t-schedule.outputs.run-ui }}
+        run: |
+          fail=0
+          check() { if [ "$2" = "$3" ]; then echo "ok   $1"; else echo "::error::$1: expected '$3', got '$2'"; fail=1; fi; }
+          check "all test calls succeed (ci job passes)" "$JOBS" "success success success success success success"
+          check "draft: gate skipped" "$DRAFT" ""
+          check "PR docs-only: no macOS (relevant/unit/ui)" "$DOCS" "false/false/false"
+          check "PR code change: build + unit" "$CODE" "true/true/false"
+          check "PR with ui-tests: build + unit + UI" "$UIOPT" "true/true/true"
+          check "push to main: build + UI only, paths ignored" "$PUSH" "true/false/true"
+          check "schedule: no macOS" "$SCHED" "false/false/false"
+          exit "$fail"

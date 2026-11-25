@@ -1,0 +1,296 @@
+# Reusable CI for iOS apps built with Xcode, designed around macOS runner cost
+# (on private repos macOS minutes count 10x against the included minutes).
+#
+# Jobs:
+#   - gate (ubuntu, seconds): decides whether macOS work is needed and runs
+#     `swift format lint --strict` when the repo has a `.swift-format` config.
+#   - build-test (macOS): build-for-testing once, then test-without-building on
+#     one simulator. Runs only when gate passes and something relevant changed.
+#   - ci (ubuntu, seconds): the check to make required. It fails when gate or
+#     build-test failed or was cancelled. Don't require build-test itself: it is
+#     skipped when gate fails, and a skipped job counts as passing.
+#
+# Cost controls:
+#   - Draft PRs skip everything (skipped counts as passing); add
+#     `ready_for_review` to the caller's pull_request types.
+#   - `paths`: on pull requests, macOS runs only when a changed file matches one
+#     of these patterns; the `ci` check still reports. Never use `on: paths` on a
+#     required workflow.
+#   - Superseded PR runs: cancelled by the caller's concurrency group (below).
+#   - Pull requests: build + unit tests. Push to main: build + UI tests only (the
+#     PR already ran the unit tests). `ui-tests: true` adds UI tests on PRs.
+#   - Never on a schedule: a scheduled run reports success without macOS work.
+#   - Xcode: the image's default unless `xcode-version` is set; a version the
+#     runner doesn't have fails early with the installed list.
+#   - Short timeout, one simulator, SwiftPM cache (no DerivedData cache: it is
+#     large and fills the repo's cache quota for little gain).
+#
+# Needs in the caller repo: a shared scheme (xcshareddata/xcschemes) whose test
+# action includes the unit and UI test targets.
+#
+# Caller example (pin by full commit SHA); require the check `<caller job> / ci`:
+#
+#   on:
+#     pull_request:
+#       types: [opened, synchronize, reopened, ready_for_review]
+#     push:
+#       branches: [main]
+#   permissions:
+#     contents: read
+#   concurrency:
+#     group: ci-${{ github.event.pull_request.number || github.ref }}
+#     cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+#   jobs:
+#     ios:
+#       permissions:
+#         contents: read
+#       uses: polinom-io/px-workflows-public/.github/workflows/ci-swift.yml@<sha> # vX.Y.Z
+#       with:
+#         project: MyApp.xcodeproj
+#         scheme: MyApp
+#         unit-test-target: MyAppTests
+#         ui-test-target: MyAppUITests
+#         paths: |
+#           MyApp/*
+#           MyAppTests/*
+#           MyAppUITests/*
+#           MyApp.xcodeproj/*
+name: ci-swift
+
+on:
+  workflow_call:
+    inputs:
+      project:
+        description: Path to the .xcodeproj or .xcworkspace, relative to the repo root
+        type: string
+        required: true
+      scheme:
+        description: Shared scheme to build and test
+        type: string
+        required: true
+      unit-test-target:
+        description: Unit test target, run on pull requests ("" to skip)
+        type: string
+        default: ""
+      ui-test-target:
+        description: UI test target, run on push to main and on PRs when ui-tests is true ("" to skip)
+        type: string
+        default: ""
+      ui-tests:
+        description: Also run UI tests on pull requests
+        type: boolean
+        default: false
+      simulator:
+        description: Simulator device name; it must exist for the selected Xcode on the runner image
+        type: string
+        default: iPhone 17
+      runner:
+        description: macOS runner image (named, not -latest, so builds are reproducible). macos-26 ships the latest stable Xcode as its default
+        type: string
+        default: macos-26
+      xcode-version:
+        description: Xcode version to select, such as "26.6" ("" = the image's default Xcode). The job fails early if it isn't installed on the runner
+        type: string
+        default: ""
+      paths:
+        description: >-
+          Newline-separated shell patterns, relative to the repo root (`*` also
+          matches `/`). On pull requests macOS runs only when a changed file
+          matches one. Empty = always run
+        type: string
+        default: ""
+      lint:
+        description: Run swift format lint when a .swift-format config exists
+        type: boolean
+        default: true
+      timeout-minutes:
+        description: macOS job timeout
+        type: number
+        default: 20
+      test-mode:
+        description: For this repo's tests only. Decide from the test-* inputs and never start macOS
+        type: boolean
+        default: false
+      test-draft:
+        type: boolean
+        default: false
+      test-event:
+        description: Event name to decide for in test-mode
+        type: string
+        default: pull_request
+      test-changed-files:
+        type: string
+        default: ""
+    outputs:
+      relevant:
+        description: "'true' when macOS work runs (or would, in test-mode)"
+        value: ${{ jobs.gate.outputs.relevant }}
+      run-unit:
+        description: "'true' when unit tests run"
+        value: ${{ jobs.gate.outputs.run-unit }}
+      run-ui:
+        description: "'true' when UI tests run"
+        value: ${{ jobs.gate.outputs.run-ui }}
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    if: github.event.pull_request.draft != true && !inputs.test-draft
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      relevant: ${{ steps.decide.outputs.relevant }}
+      run-unit: ${{ steps.decide.outputs.run-unit }}
+      run-ui: ${{ steps.decide.outputs.run-ui }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: ${{ !inputs.test-mode }}
+        with:
+          persist-credentials: false
+          # A pull_request checkout is the merge commit; its first parent is the base tip.
+          fetch-depth: ${{ (github.event_name == 'pull_request' && inputs.paths != '') && 2 || 1 }}
+
+      - name: Decide macOS work
+        id: decide
+        env:
+          PATTERNS: ${{ inputs.paths }}
+          TEST_MODE: ${{ inputs.test-mode }}
+          TEST_CHANGED: ${{ inputs.test-changed-files }}
+          EVENT: ${{ inputs.test-mode && inputs.test-event || github.event_name }}
+          UNIT_TARGET: ${{ inputs.unit-test-target }}
+          UI_TARGET: ${{ inputs.ui-test-target }}
+          UI_ON_PR: ${{ inputs.ui-tests }}
+        run: |
+          relevant=true
+          if [ "$EVENT" = schedule ]; then
+            echo "Scheduled run: no macOS work by design."
+            relevant=false
+          elif [ "$EVENT" = pull_request ] && [ -n "$PATTERNS" ]; then
+            if [ "$TEST_MODE" = true ]; then changed=$TEST_CHANGED
+            else changed=$(git diff --name-only HEAD^1 HEAD); fi
+            relevant=false
+            while IFS= read -r file; do
+              [ -n "$file" ] || continue
+              while IFS= read -r pattern; do
+                [ -n "$pattern" ] || continue
+                # shellcheck disable=SC2053 # unquoted on purpose: pattern match
+                if [[ $file == $pattern ]]; then
+                  echo "Relevant change: $file (matches $pattern)"
+                  relevant=true
+                  break 2
+                fi
+              done <<< "$PATTERNS"
+            done <<< "$changed"
+            [ "$relevant" = true ] || echo "No changed file matches \`paths\`: no macOS work; the ci check passes."
+          fi
+
+          run_unit=false; run_ui=false
+          if [ "$relevant" = true ]; then
+            if [ "$EVENT" = pull_request ]; then
+              [ -n "$UNIT_TARGET" ] && run_unit=true
+              [ -n "$UI_TARGET" ] && [ "$UI_ON_PR" = true ] && run_ui=true
+            else
+              [ -n "$UI_TARGET" ] && run_ui=true
+            fi
+          fi
+          echo "relevant=$relevant run-unit=$run_unit run-ui=$run_ui"
+          {
+            echo "relevant=$relevant"
+            echo "run-unit=$run_unit"
+            echo "run-ui=$run_ui"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Lint with swift format
+        if: ${{ !inputs.test-mode && inputs.lint && hashFiles('.swift-format') != '' }}
+        run: swift format lint --strict --recursive .
+
+  build-test:
+    needs: gate
+    if: needs.gate.outputs.relevant == 'true' && !inputs.test-mode
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    permissions:
+      contents: read
+    env:
+      PROJECT: ${{ inputs.project }}
+      SCHEME: ${{ inputs.scheme }}
+      DESTINATION: platform=iOS Simulator,name=${{ inputs.simulator }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Select Xcode
+        env:
+          XCODE_VERSION: ${{ inputs.xcode-version }}
+          RUNNER_IMAGE: ${{ inputs.runner }}
+        run: |
+          if [ -n "$XCODE_VERSION" ]; then
+            app="/Applications/Xcode_${XCODE_VERSION}.app"
+            if [ ! -d "$app" ]; then
+              echo "::error::Xcode ${XCODE_VERSION} is not installed on ${RUNNER_IMAGE}. Installed:"
+              find /Applications -maxdepth 1 -name 'Xcode_*.app' | sed 's|.*/Xcode_||; s|\.app$||' | sort -V
+              echo "Pick one of these with xcode-version, or another image with runner."
+              exit 1
+            fi
+            sudo xcode-select -s "$app"
+          fi
+          xcodebuild -version
+
+      - name: Cache SwiftPM packages
+        if: hashFiles('**/Package.resolved') != ''
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/spm
+          key: spm-${{ runner.os }}-${{ hashFiles('**/Package.resolved') }}
+
+      - name: Build for testing
+        run: |
+          case "$PROJECT" in
+            *.xcworkspace) container=(-workspace "$PROJECT") ;;
+            *) container=(-project "$PROJECT") ;;
+          esac
+          echo "CONTAINER_FLAG=${container[0]}" >> "$GITHUB_ENV"
+          xcodebuild build-for-testing "${container[@]}" -scheme "$SCHEME" \
+            -destination "$DESTINATION" -derivedDataPath "$RUNNER_TEMP/dd" \
+            -clonedSourcePackagesDirPath "$RUNNER_TEMP/spm" \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Unit tests
+        if: needs.gate.outputs.run-unit == 'true'
+        env:
+          TARGET: ${{ inputs.unit-test-target }}
+        run: |
+          xcodebuild test-without-building "$CONTAINER_FLAG" "$PROJECT" -scheme "$SCHEME" \
+            -destination "$DESTINATION" -derivedDataPath "$RUNNER_TEMP/dd" \
+            -only-testing:"$TARGET"
+
+      - name: UI tests
+        if: needs.gate.outputs.run-ui == 'true'
+        env:
+          TARGET: ${{ inputs.ui-test-target }}
+        run: |
+          xcodebuild test-without-building "$CONTAINER_FLAG" "$PROJECT" -scheme "$SCHEME" \
+            -destination "$DESTINATION" -derivedDataPath "$RUNNER_TEMP/dd" \
+            -only-testing:"$TARGET"
+
+  ci:
+    needs: [gate, build-test]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Report result
+        env:
+          GATE: ${{ needs.gate.result }}
+          BUILD: ${{ needs.build-test.result }}
+        run: |
+          echo "gate=$GATE build-test=$BUILD"
+          for r in "$GATE" "$BUILD"; do
+            case "$r" in failure|cancelled) echo "::error::CI failed (gate=$GATE, build-test=$BUILD)"; exit 1 ;; esac
+          done
